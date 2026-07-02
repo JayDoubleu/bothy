@@ -1,5 +1,8 @@
 # bothy
 
+[![CI](https://github.com/JayDoubleu/bothy/actions/workflows/ci.yml/badge.svg)](https://github.com/JayDoubleu/bothy/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Isolated, declarative development environments on rootless podman.
 
 A bothy is a small shelter in the hills: everything you need, nothing you
@@ -44,6 +47,12 @@ documented in `internal/engine/integrations.go` and
 
 ```console
 $ make build   # produces bin/bothy (static)
+```
+
+or, without cloning:
+
+```console
+$ go install github.com/jaydoubleu/bothy/cmd/bothy@latest
 ```
 
 Write a manifest at `~/.config/bothy/work.yaml`:

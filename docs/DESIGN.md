@@ -492,8 +492,9 @@ about toolbox are verified against `main` at commit 0851179
 facts about distrobox against 1.8.2.5 (`distrobox-create`, `distrobox-init`,
 `distrobox-enter`).
 
-**Status in the walking skeleton:** every toggle is parsed, validated, merged,
-and hashed, but only `network` is wired to podman. Enabling any other toggle
+**Status in the walking skeleton:** every toggle is parsed, validated, and
+merged (and, when set in a file layer, covered by the drift hash), but only
+`network` is wired to podman. Enabling any other toggle
 prints a warning that it is not yet implemented. The exact planned wiring for
 each toggle lives as doc comments with TODOs in
 `internal/engine/integrations.go`, mirroring the subsections below, so the
