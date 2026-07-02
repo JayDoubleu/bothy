@@ -27,6 +27,7 @@ func TestResolvePrecedenceAndDefaults(t *testing.T) {
 		Mounts: []Mount{
 			{Source: "~/.config/nvim"},
 			{Source: "/opt/data", Target: "/srv/data", Mode: "rw"},
+			{Source: "~/devel", Mode: "overlay"},
 		},
 		Packages: []string{"neovim"},
 		Integration: Integration{
@@ -62,6 +63,7 @@ func TestResolvePrecedenceAndDefaults(t *testing.T) {
 	wantMounts := []ResolvedMount{
 		{Source: "/testhome/.config/nvim", Target: "/home/alice/.config/nvim", Mode: "ro"},
 		{Source: "/opt/data", Target: "/srv/data", Mode: "rw"},
+		{Source: "/testhome/devel", Target: "/home/alice/devel", Mode: "overlay"},
 	}
 	if !reflect.DeepEqual(cfg.Mounts, wantMounts) {
 		t.Errorf("mounts = %+v, want %+v", cfg.Mounts, wantMounts)

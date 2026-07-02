@@ -97,7 +97,7 @@ func Resolve(opts ResolveOptions, layers ...*Manifest) (*Config, error) {
 		target := expandAgainst(targetRaw, containerHome)
 		mode := m.Mode
 		if mode == "" {
-			mode = "ro"
+			mode = ModeRO
 		}
 		if !filepath.IsAbs(source) {
 			return nil, fmt.Errorf("mounts[%d]: source %q must be an absolute path or start with ~", i, m.Source)

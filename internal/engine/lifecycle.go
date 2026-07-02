@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,19 @@ func NewStamp() (string, error) {
 		return "", fmt.Errorf("cannot generate readiness stamp: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+// OverlayDirs returns the host-side upper and work directories backing an
+// overlay mount at the given container target. They live under the bothy
+// home so the copy-on-write delta shares the home's lifecycle: rm deletes
+// it, rm --keep-home preserves it. Keyed by target path (not mount index)
+// so a reordered manifest keeps its deltas. Note the kernel requires the
+// upper dir to be outside the overlay's source tree, so an overlay of a
+// directory that contains the bothy home itself cannot work.
+func OverlayDirs(homeDir, target string) (upper, work string) {
+	slug := strings.Trim(strings.ReplaceAll(target, "/", "-"), "-")
+	base := filepath.Join(homeDir, ".local", "state", "bothy", "overlays", slug)
+	return filepath.Join(base, "upper"), filepath.Join(base, "work")
 }
 
 // ReadyStampPath returns the host-side path of the readiness stamp that

@@ -166,12 +166,17 @@ home: ~/bothy-homes/work
 #   source: host path (required). ~ expands against the real host home.
 #   target: container path. Defaults to the source path. ~ expands against
 #           the container home, /home/<username>.
-#   mode:   "ro" (default) or "rw".
+#   mode:   "ro" (default), "rw", or "overlay". Overlay mounts the source as
+#           a read-only overlayfs lower layer: the bothy sees a writable
+#           directory, but writes land in a copy-on-write upper layer under
+#           the bothy home and the host source is never modified.
 mounts:
   - source: ~/.config/nvim        # read-only by default
   - source: ~/projects/foo
     target: ~/foo                 # lands at /home/<user>/foo
     mode: rw
+  - source: ~/devel
+    mode: overlay                 # writable inside, host untouched
 
 # Optional. Host integration toggles. All default to false: a manifest that
 # omits this block gets no host desktop plumbing at all.
@@ -210,6 +215,32 @@ Path expansion rules: `~` in host-side fields (`home`, `mounts[].source`)
 expands against the real host home. `~` in `mounts[].target` expands against
 the container home, `/home/<username>`, because that is where the path will
 resolve when used.
+
+### Overlay mounts (copy-on-write)
+
+`mode: overlay` uses podman's overlay volume option (`-v src:dst:O`) with
+explicit `upperdir`/`workdir` so the delta persists. The upper and work
+directories live under the bothy home at
+`.local/state/bothy/overlays/<target-slug>/`, keyed by target path so a
+reordered manifest keeps its deltas, and they share the home's lifecycle:
+`rm` deletes the delta, `rm --keep-home` preserves it, and it survives
+container stop/start. `create` prints a warning whenever overlay mounts are
+present, because the trade-off inverts bothy's usual posture: the bothy can
+READ everything under the source (credentials included); only writes are
+contained.
+
+Two kernel constraints apply (both verified against rootless podman 5.8.2).
+First, overlayfs refuses a lower layer that contains other active mounts
+("failed to clone lowerpath"), and rootless podman's own storage is mounted
+under `~/.local/share/containers` whenever a container runs, so a whole-home
+overlay is impossible with default storage; overlay the directories you work
+in instead. Second, the upper dir must live outside the source tree, so a
+source that contains the bothy home itself (such as `~/.local`) cannot work.
+`create` detects podman's "Invalid argument" in the presence of overlay
+mounts and prints a hint covering both. Also inherent to overlayfs:
+host-side writes to the source while the overlay is mounted are formally
+undefined; fine for code and dotfiles, risky for hot directories like
+browser profiles.
 
 ### Example manifests
 
@@ -644,19 +675,11 @@ Honest list, roughly ordered by how likely each is to bite.
     `--userns=keep-id:size=` with a throwaway container to handle differing
     podman versions. bothy currently assumes podman >= 4 and plain
     `keep-id`; if UID-range issues appear on exotic setups, adopt the probe.
-11. **`mode: overlay` (copy-on-write mounts).** Podman's overlay volume
-    mounts (`-v src:dst:O`) give a container a writable view of a host
-    directory whose writes land in a copy-on-write upper layer, leaving the
-    host untouched. Verified working rootless per-directory (writes and
-    deletes contained). A `mode: overlay` on bothy mounts is the natural
-    shape, with the upper/work dirs persisted under the bothy home so the
-    delta survives restarts. Two hard facts constrain it: (a) a whole-home
-    overlay is impossible with default rootless storage, because overlayfs
-    refuses a lower layer containing other mounts ("failed to clone
-    lowerpath") and podman's own storage is mounted under
-    `~/.local/share/containers` whenever a container runs; (b) it is write
-    protection only, not read privacy: the container reads everything in the
-    overlaid directory, which inverts bothy's default posture and must be
-    documented loudly. Host-side writes to the lower layer while the overlay
-    is mounted are formally undefined in overlayfs; acceptable for dotfiles,
-    risky for hot directories.
+11. **Overlay lower-layer mutation.** `mode: overlay` is implemented
+    (section 3), but overlayfs leaves behaviour undefined when the host
+    modifies a source directory while a bothy has it overlay-mounted, and in
+    practice the host does exactly that for long-lived bothies. Options if
+    it bites: document "stop the bothy before big host-side changes",
+    snapshot the source at create time on reflink-capable filesystems, or
+    detect staleness and suggest a restart. Waiting for real-world reports
+    before choosing.

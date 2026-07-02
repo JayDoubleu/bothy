@@ -132,6 +132,41 @@ func TestBuildCreateSpecStubbedIntegrationsWarn(t *testing.T) {
 	}
 }
 
+func TestBuildCreateSpecOverlayMount(t *testing.T) {
+	cfg := testConfig()
+	cfg.Mounts = []config.ResolvedMount{
+		{Source: "/testhome/devel", Target: "/home/alice/devel", Mode: "overlay"},
+	}
+	spec, warnings, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantUpper, wantWork := OverlayDirs(cfg.Home, "/home/alice/devel")
+	want := runtime.Mount{
+		Source:   "/testhome/devel",
+		Target:   "/home/alice/devel",
+		Overlay:  true,
+		UpperDir: wantUpper,
+		WorkDir:  wantWork,
+	}
+	if !reflect.DeepEqual(spec.Mounts[2], want) {
+		t.Errorf("overlay mount = %+v, want %+v", spec.Mounts[2], want)
+	}
+	if !strings.HasPrefix(wantUpper, cfg.Home+"/") || !strings.HasPrefix(wantWork, cfg.Home+"/") {
+		t.Errorf("overlay dirs must live under the bothy home: %s, %s", wantUpper, wantWork)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "read access") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("missing read-exposure warning, got %v", warnings)
+	}
+}
+
 func TestConfigHashDeterministicAndSensitive(t *testing.T) {
 	a, err := ConfigHash(testConfig())
 	if err != nil {

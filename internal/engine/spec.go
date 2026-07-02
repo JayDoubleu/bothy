@@ -83,20 +83,31 @@ func BuildCreateSpec(name string, cfg *config.Config, exePath string, u User, st
 		return runtime.CreateSpec{}, nil, err
 	}
 
+	var warnings []string
 	mounts := []runtime.Mount{
 		// The bothy's private home. The real host home is never mounted.
 		{Source: cfg.Home, Target: ContainerHome(u)},
 		{Source: exePath, Target: BinaryMountPath, ReadOnly: true},
 	}
+	overlays := 0
 	for _, m := range cfg.Mounts {
-		mounts = append(mounts, runtime.Mount{
-			Source:   m.Source,
-			Target:   m.Target,
-			ReadOnly: m.Mode == "ro",
-		})
+		mount := runtime.Mount{Source: m.Source, Target: m.Target}
+		switch m.Mode {
+		case config.ModeRO:
+			mount.ReadOnly = true
+		case config.ModeOverlay:
+			mount.Overlay = true
+			mount.UpperDir, mount.WorkDir = OverlayDirs(cfg.Home, m.Target)
+			overlays++
+		}
+		mounts = append(mounts, mount)
+	}
+	if overlays > 0 {
+		warnings = append(warnings, "overlay mounts give the bothy read access to everything under their sources; only writes are contained")
 	}
 
-	integMounts, integEnv, warnings := integrationMounts(cfg)
+	integMounts, integEnv, integWarnings := integrationMounts(cfg)
+	warnings = append(warnings, integWarnings...)
 	mounts = append(mounts, integMounts...)
 
 	env := make(map[string]string, len(cfg.Env)+len(integEnv)+1)

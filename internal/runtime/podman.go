@@ -281,11 +281,19 @@ func createArgs(spec CreateSpec) []string {
 		args = append(args, "--env", k+"="+spec.Env[k])
 	}
 	for _, m := range spec.Mounts {
-		mode := "rw"
-		if m.ReadOnly {
-			mode = "ro"
+		var opts string
+		switch {
+		case m.Overlay:
+			opts = ":O"
+			if m.UpperDir != "" {
+				opts += ",upperdir=" + m.UpperDir + ",workdir=" + m.WorkDir
+			}
+		case m.ReadOnly:
+			opts = ":ro"
+		default:
+			opts = ":rw"
 		}
-		args = append(args, "--volume", m.Source+":"+m.Target+":"+mode)
+		args = append(args, "--volume", m.Source+":"+m.Target+opts)
 	}
 	args = append(args, spec.ExtraArgs...)
 	args = append(args, spec.Image)

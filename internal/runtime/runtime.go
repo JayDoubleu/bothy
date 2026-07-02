@@ -23,11 +23,18 @@ func (e *ExitError) Error() string {
 	return fmt.Sprintf("command exited with status %d", e.Code)
 }
 
-// Mount is a bind mount in a container spec.
+// Mount is a bind mount in a container spec. When Overlay is set the source
+// becomes the read-only lower layer of an overlayfs (podman's ":O" volume
+// option); writes go to UpperDir (WorkDir is overlayfs scratch space, and
+// must live on the same filesystem as UpperDir). With Overlay unset,
+// ReadOnly picks between ":ro" and ":rw".
 type Mount struct {
 	Source   string
 	Target   string
 	ReadOnly bool
+	Overlay  bool
+	UpperDir string
+	WorkDir  string
 }
 
 // CreateSpec describes a container to create. Field order here mirrors the

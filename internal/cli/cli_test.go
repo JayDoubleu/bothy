@@ -84,6 +84,46 @@ func TestCreateBuildsExpectedSpec(t *testing.T) {
 	}
 }
 
+func TestCreateOverlayMountMakesDirs(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	home := filepath.Join(tmp, "bothy-home")
+	src := filepath.Join(tmp, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := writeManifest(t, tmp, "ovl.yaml",
+		"schema_version: 1\nimage: fedora:42\nhome: "+home+"\nmounts:\n  - source: "+src+"\n    target: /mnt/ovl\n    mode: overlay\n")
+
+	fake := runtime.NewFake()
+	oldStamp := newStamp
+	newStamp = func() (string, error) { return "teststamp", nil }
+	t.Cleanup(func() { newStamp = oldStamp })
+	stamp := engine.ReadyStampPath(home, "teststamp")
+	if err := os.MkdirAll(filepath.Dir(stamp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stamp, []byte("ready\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runCLI(t, fake, "create", "ovl", "-f", manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := fake.CreatedSpecs[0]
+	mount := spec.Mounts[2]
+	if !mount.Overlay || mount.Source != src || mount.Target != "/mnt/ovl" {
+		t.Errorf("overlay mount = %+v", mount)
+	}
+	for _, dir := range []string{mount.UpperDir, mount.WorkDir} {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			t.Errorf("overlay dir %s not created: %v", dir, err)
+		}
+	}
+}
+
 func TestRmKeepHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

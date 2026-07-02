@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -92,7 +93,26 @@ func runCreate(ctx context.Context, name, file string, flags *overrideFlags) err
 		fmt.Fprintln(os.Stderr, "warning: "+w)
 	}
 
+	hasOverlay := false
+	for _, m := range spec.Mounts {
+		if !m.Overlay {
+			continue
+		}
+		hasOverlay = true
+		for _, dir := range []string{m.UpperDir, m.WorkDir} {
+			if dir == "" {
+				continue
+			}
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return fmt.Errorf("cannot create overlay directory: %w", err)
+			}
+		}
+	}
+
 	if _, err := rt.Create(ctx, spec); err != nil {
+		if hasOverlay && strings.Contains(err.Error(), "Invalid argument") {
+			return fmt.Errorf("%w\nhint: an overlay mount's source must not contain other active mounts (podman's own storage under ~/.local/share/containers rules out whole-home overlays), and the bothy home must not live inside an overlay source", err)
+		}
 		return err
 	}
 	if err := rt.Start(ctx, containerName); err != nil {

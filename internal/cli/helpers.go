@@ -47,21 +47,22 @@ func hostUser() (engine.User, error) {
 // overrideFlags are the CLI-level config overrides; they form the highest
 // precedence manifest layer.
 type overrideFlags struct {
-	image     string
-	hostname  string
-	home      string
-	network   string
-	noNetwork bool
-	mountRO   []string
-	mountRW   []string
-	env       []string
-	gui       bool
-	audio     bool
-	dbus      bool
-	devices   bool
-	fonts     bool
-	sshAgent  bool
-	timezone  bool
+	image        string
+	hostname     string
+	home         string
+	network      string
+	noNetwork    bool
+	mountRO      []string
+	mountRW      []string
+	mountOverlay []string
+	env          []string
+	gui          bool
+	audio        bool
+	dbus         bool
+	devices      bool
+	fonts        bool
+	sshAgent     bool
+	timezone     bool
 }
 
 func (f *overrideFlags) register(cmd *cobra.Command) {
@@ -73,6 +74,7 @@ func (f *overrideFlags) register(cmd *cobra.Command) {
 	flags.BoolVar(&f.noNetwork, "no-network", false, "shorthand for --network none")
 	flags.StringArrayVar(&f.mountRO, "mount-ro", nil, "read-only mount src[:dst] (repeatable)")
 	flags.StringArrayVar(&f.mountRW, "mount-rw", nil, "read-write mount src[:dst] (repeatable)")
+	flags.StringArrayVar(&f.mountOverlay, "mount-overlay", nil, "copy-on-write mount src[:dst]: writable inside, host source untouched (repeatable)")
 	flags.StringArrayVar(&f.env, "env", nil, "environment variable KEY=VALUE (repeatable)")
 	flags.BoolVar(&f.gui, "gui", false, "enable the gui integration toggle")
 	flags.BoolVar(&f.audio, "audio", false, "enable the audio integration toggle")
@@ -98,10 +100,13 @@ func (f *overrideFlags) manifest() (*config.Manifest, error) {
 		m.Network = config.NetworkNone
 	}
 	for _, s := range f.mountRO {
-		m.Mounts = append(m.Mounts, parseMountFlag(s, "ro"))
+		m.Mounts = append(m.Mounts, parseMountFlag(s, config.ModeRO))
 	}
 	for _, s := range f.mountRW {
-		m.Mounts = append(m.Mounts, parseMountFlag(s, "rw"))
+		m.Mounts = append(m.Mounts, parseMountFlag(s, config.ModeRW))
+	}
+	for _, s := range f.mountOverlay {
+		m.Mounts = append(m.Mounts, parseMountFlag(s, config.ModeOverlay))
 	}
 	for _, e := range f.env {
 		k, v, ok := strings.Cut(e, "=")

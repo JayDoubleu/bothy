@@ -64,6 +64,8 @@ func TestCreateArgs(t *testing.T) {
 		Mounts: []Mount{
 			{Source: "/host/home", Target: "/home/alice"},
 			{Source: "/usr/bin/bothy", Target: "/usr/libexec/bothy", ReadOnly: true},
+			{Source: "/host/cfg", Target: "/home/alice/.config", Overlay: true, UpperDir: "/ovl/upper", WorkDir: "/ovl/work"},
+			{Source: "/host/tmp", Target: "/mnt/tmp", Overlay: true},
 		},
 		ExtraArgs:  []string{"--memory=4g"},
 		Image:      "fedora:42",
@@ -82,6 +84,8 @@ func TestCreateArgs(t *testing.T) {
 		"--env", "EDITOR=nvim",
 		"--volume", "/host/home:/home/alice:rw",
 		"--volume", "/usr/bin/bothy:/usr/libexec/bothy:ro",
+		"--volume", "/host/cfg:/home/alice/.config:O,upperdir=/ovl/upper,workdir=/ovl/work",
+		"--volume", "/host/tmp:/mnt/tmp:O",
 		"--memory=4g",
 		"fedora:42",
 		"/usr/libexec/bothy", "init", "--uid", "1000",

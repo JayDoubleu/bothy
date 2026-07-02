@@ -88,7 +88,7 @@ flags).
 | `image` | required | container image |
 | `hostname` | the bothy name | container hostname |
 | `home` | `~/.local/share/bothy/homes/<name>` | host path of the private home |
-| `mounts` | `[]` | list of `{source, target, mode}`; `target` defaults to `source`, `mode` to `ro` |
+| `mounts` | `[]` | list of `{source, target, mode}`; `target` defaults to `source`, `mode` to `ro` (`rw` and `overlay` available) |
 | `integration.gui/audio/dbus/devices/fonts/ssh_agent/timezone` | all `false` | host-feature toggles (stubbed) |
 | `network` | `private` | `host`, `private`, or `none` |
 | `env` | `{}` | environment variables |
@@ -101,6 +101,16 @@ Inside every bothy the reserved `BOTHY` environment variable holds the
 bothy's name, so shared dotfiles can branch on it (for example, pointing
 lazy.nvim's lockfile at a writable path when `~/.config/nvim` is mounted
 read-only).
+
+`mode: overlay` (or `--mount-overlay`) gives the bothy a *writable view* of
+a host directory whose writes land in a copy-on-write layer under the bothy
+home: the container thinks it is modifying your files, but the host source
+is never touched, and the delta survives restarts (deleted with `bothy rm`,
+kept with `--keep-home`). Mind the trade-off: the bothy can still read
+everything under the source. Whole-home overlays are not possible (the
+kernel refuses a lower layer containing other mounts, and rootless podman's
+own storage lives under `~/.local/share/containers`); overlay the
+directories you work in instead.
 
 ## Design
 

@@ -25,7 +25,7 @@ type Manifest struct {
 
 // Mount declares a single host path shared into the bothy. Target defaults
 // to the source path (expanded against the container home) and Mode
-// defaults to "ro".
+// defaults to "ro"; "rw" and "overlay" are the other modes.
 type Mount struct {
 	Source string `yaml:"source"`
 	Target string `yaml:"target,omitempty"`
@@ -91,4 +91,14 @@ const (
 	NetworkHost    = "host"
 	NetworkPrivate = "private"
 	NetworkNone    = "none"
+)
+
+// Mount modes. ModeOverlay mounts the source as a read-only overlayfs lower
+// layer: the bothy sees a writable directory, but writes land in a
+// copy-on-write upper layer under the bothy home and the host source is
+// never modified.
+const (
+	ModeRO      = "ro"
+	ModeRW      = "rw"
+	ModeOverlay = "overlay"
 )

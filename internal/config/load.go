@@ -97,14 +97,14 @@ func (m *Manifest) validate() error {
 
 func validMode(mode string, allowEmpty bool) error {
 	switch mode {
-	case "ro", "rw":
+	case ModeRO, ModeRW, ModeOverlay:
 		return nil
 	case "":
 		if allowEmpty {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid mode %q (expected \"ro\" or \"rw\")", mode)
+	return fmt.Errorf("invalid mode %q (expected \"ro\", \"rw\" or \"overlay\")", mode)
 }
 
 func validNetwork(network string, allowEmpty bool) error {
