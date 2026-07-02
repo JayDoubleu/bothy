@@ -1,0 +1,22 @@
+# A work environment. Credentials such as ~/.azure live only inside the
+# bothy's private home (~/.local/share/bothy/homes/work); nothing is shared
+# back to the real host home.
+schema_version: 1
+image: registry.fedoraproject.org/fedora:42
+
+# Read-only view of the host neovim config. The target defaults to the same
+# path, expanded against the container home.
+mounts:
+  - source: ~/.config/nvim
+
+integration:
+  gui: true # Wayland/X11 sockets (stubbed in the walking skeleton)
+
+network: private
+
+env:
+  EDITOR: nvim
+
+packages:
+  - git
+  - neovim

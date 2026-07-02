@@ -1,0 +1,4 @@
+# Minimal headless bothy: an image and nothing else.
+# Private network, empty private home, no host integration at all.
+schema_version: 1
+image: registry.fedoraproject.org/fedora:42

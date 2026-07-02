@@ -1,0 +1,20 @@
+schema_version: 1
+image: registry.fedoraproject.org/fedora:42
+hostname: workbox
+home: ~/bothy-homes/work
+mounts:
+  - source: ~/.config/nvim
+  - source: /opt/data
+    target: /srv/data
+    mode: rw
+integration:
+  gui: true
+  ssh_agent: true
+network: host
+env:
+  EDITOR: nvim
+packages:
+  - git
+  - neovim
+extra_podman_args:
+  - --memory=4g

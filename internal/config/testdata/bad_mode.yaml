@@ -1,0 +1,5 @@
+schema_version: 1
+image: registry.fedoraproject.org/fedora:42
+mounts:
+  - source: ~/.config/nvim
+    mode: wr
