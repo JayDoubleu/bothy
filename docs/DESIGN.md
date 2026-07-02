@@ -644,3 +644,19 @@ Honest list, roughly ordered by how likely each is to bite.
     `--userns=keep-id:size=` with a throwaway container to handle differing
     podman versions. bothy currently assumes podman >= 4 and plain
     `keep-id`; if UID-range issues appear on exotic setups, adopt the probe.
+11. **`mode: overlay` (copy-on-write mounts).** Podman's overlay volume
+    mounts (`-v src:dst:O`) give a container a writable view of a host
+    directory whose writes land in a copy-on-write upper layer, leaving the
+    host untouched. Verified working rootless per-directory (writes and
+    deletes contained). A `mode: overlay` on bothy mounts is the natural
+    shape, with the upper/work dirs persisted under the bothy home so the
+    delta survives restarts. Two hard facts constrain it: (a) a whole-home
+    overlay is impossible with default rootless storage, because overlayfs
+    refuses a lower layer containing other mounts ("failed to clone
+    lowerpath") and podman's own storage is mounted under
+    `~/.local/share/containers` whenever a container runs; (b) it is write
+    protection only, not read privacy: the container reads everything in the
+    overlaid directory, which inverts bothy's default posture and must be
+    documented loudly. Host-side writes to the lower layer while the overlay
+    is mounted are formally undefined in overlayfs; acceptable for dotfiles,
+    risky for hot directories.
