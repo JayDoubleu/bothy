@@ -97,6 +97,11 @@ flags).
 
 Unknown keys are errors. Paths accept `~`.
 
+Inside every bothy the reserved `BOTHY` environment variable holds the
+bothy's name, so shared dotfiles can branch on it (for example, pointing
+lazy.nvim's lockfile at a writable path when `~/.config/nvim` is mounted
+read-only).
+
 ## Design
 
 The architecture (toolbox-style init entrypoint, readiness stamps, config

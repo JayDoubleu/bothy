@@ -99,13 +99,17 @@ func BuildCreateSpec(name string, cfg *config.Config, exePath string, u User, st
 	integMounts, integEnv, warnings := integrationMounts(cfg)
 	mounts = append(mounts, integMounts...)
 
-	env := make(map[string]string, len(cfg.Env)+len(integEnv))
+	env := make(map[string]string, len(cfg.Env)+len(integEnv)+1)
 	for k, v := range cfg.Env {
 		env[k] = v
 	}
 	for k, v := range integEnv {
 		env[k] = v
 	}
+	// Marker for scripts and dotfiles to detect they are inside a bothy
+	// (and which one), like TOOLBOX_PATH / DISTROBOX_ENTER_PATH in the
+	// neighbouring tools. Reserved: set last so config env cannot mask it.
+	env["BOTHY"] = name
 
 	var network string
 	switch cfg.Network {

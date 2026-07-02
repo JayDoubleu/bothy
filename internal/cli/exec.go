@@ -56,8 +56,9 @@ func runExec(ctx context.Context, name string, command []string, tty bool) error
 		return err
 	}
 	env := map[string]string{
-		"HOME": engine.ContainerHome(u),
-		"USER": u.Username,
+		"HOME":  engine.ContainerHome(u),
+		"USER":  u.Username,
+		"BOTHY": name,
 	}
 	if term := os.Getenv("TERM"); term != "" && tty {
 		env["TERM"] = term

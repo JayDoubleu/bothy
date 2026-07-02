@@ -48,6 +48,9 @@ func TestBuildCreateSpec(t *testing.T) {
 	if spec.Network != "none" {
 		t.Errorf("network = %q", spec.Network)
 	}
+	if spec.Env["EDITOR"] != "nvim" || spec.Env["BOTHY"] != "work" {
+		t.Errorf("env = %v (config env plus the reserved BOTHY marker)", spec.Env)
+	}
 
 	hash, err := ConfigHash(cfg)
 	if err != nil {

@@ -304,6 +304,15 @@ semantically identical configs always hash identically.
    image, then the entrypoint `/usr/libexec/bothy init`.
 5. `podman create`, `podman start`, then poll for init readiness.
 
+Every bothy also gets a reserved `BOTHY=<name>` environment variable, set at
+create time and again at exec time, so scripts and dotfiles shared into a
+bothy can detect where they are running (the same job TOOLBOX_PATH and the
+DISTROBOX_* variables do in the neighbouring tools). A practical example: a
+read-only `~/.config/nvim` mount means lazy.nvim cannot write its
+`lazy-lock.json` there, so an init.lua can branch on `vim.env.BOTHY` and
+relocate the lockfile into the writable data dir. `BOTHY` is set after the
+manifest's `env:` is merged, so config cannot mask it.
+
 Two flags deserve explanation. `--security-opt label=disable` matches toolbox
 and distrobox: on SELinux systems, container processes would otherwise be
 denied access to bind-mounted user files unless every source were relabelled,
