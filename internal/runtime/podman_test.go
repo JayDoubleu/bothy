@@ -86,9 +86,9 @@ func TestCreateArgs(t *testing.T) {
 		"--volume", "/usr/bin/bothy:/usr/libexec/bothy:ro",
 		"--volume", "/host/cfg:/home/alice/.config:O,upperdir=/ovl/upper,workdir=/ovl/work",
 		"--volume", "/host/tmp:/mnt/tmp:O",
+		"--entrypoint", `["/usr/libexec/bothy","init","--uid","1000"]`,
 		"--memory=4g",
 		"fedora:42",
-		"/usr/libexec/bothy", "init", "--uid", "1000",
 	}
 	if got := createArgs(spec); !reflect.DeepEqual(got, want) {
 		t.Errorf("createArgs:\n got  %q\n want %q", got, want)

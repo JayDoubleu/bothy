@@ -108,3 +108,35 @@ func TestResolveErrors(t *testing.T) {
 		t.Errorf("relative mount source: %v", err)
 	}
 }
+
+func TestResolveRejectsVolumeUnsafePaths(t *testing.T) {
+	t.Setenv("HOME", "/testhome")
+
+	// podman --volume uses ':' and ',' as separators with no escaping, so
+	// such paths must be rejected up front with a clear error.
+	cases := []struct {
+		name     string
+		manifest *Manifest
+		wantIn   string
+	}{
+		{"colon in mount source", &Manifest{Image: "img", Mounts: []Mount{{Source: "/data/a:b"}}}, "mounts[0]: source"},
+		{"comma in mount source", &Manifest{Image: "img", Mounts: []Mount{{Source: "/data/a,b"}}}, "mounts[0]: source"},
+		{"colon in mount target", &Manifest{Image: "img", Mounts: []Mount{{Source: "/data/ok", Target: "/dst/a:b"}}}, "mounts[0]: target"},
+		{"comma in home", &Manifest{Image: "img", Home: "/homes/a,b"}, "home"},
+	}
+	for _, tc := range cases {
+		_, err := Resolve(ResolveOptions{Name: "x", Username: "alice"}, tc.manifest)
+		if err == nil || !strings.Contains(err.Error(), tc.wantIn) || !strings.Contains(err.Error(), "podman volume") {
+			t.Errorf("%s: err = %v", tc.name, err)
+		}
+	}
+
+	// The characters remain fine outside volume-bound fields.
+	cfg, err := Resolve(ResolveOptions{Name: "x", Username: "alice"}, &Manifest{
+		Image: "img",
+		Env:   map[string]string{"PATHISH": "/a:/b,c"},
+	})
+	if err != nil || cfg.Env["PATHISH"] != "/a:/b,c" {
+		t.Errorf("env values must not be restricted: %v %v", cfg, err)
+	}
+}

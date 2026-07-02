@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // ResolveOptions carries per-invocation context needed to turn manifest
@@ -82,6 +83,9 @@ func Resolve(opts ResolveOptions, layers ...*Manifest) (*Config, error) {
 		return nil, err
 	}
 	cfg.Home = home
+	if err := rejectVolumeUnsafe("home", cfg.Home); err != nil {
+		return nil, err
+	}
 
 	containerHome := "/home/" + opts.Username
 	cfg.Mounts = make([]ResolvedMount, 0, len(merged.Mounts))
@@ -104,6 +108,12 @@ func Resolve(opts ResolveOptions, layers ...*Manifest) (*Config, error) {
 		}
 		if !filepath.IsAbs(target) {
 			return nil, fmt.Errorf("mounts[%d]: target %q must be an absolute path or start with ~", i, targetRaw)
+		}
+		if err := rejectVolumeUnsafe(fmt.Sprintf("mounts[%d]: source", i), source); err != nil {
+			return nil, err
+		}
+		if err := rejectVolumeUnsafe(fmt.Sprintf("mounts[%d]: target", i), target); err != nil {
+			return nil, err
 		}
 		cfg.Mounts = append(cfg.Mounts, ResolvedMount{Source: source, Target: target, Mode: mode})
 	}
@@ -155,6 +165,16 @@ func applyToggle(dst **bool, src *bool) {
 
 func boolOf(p *bool) bool {
 	return p != nil && *p
+}
+
+// rejectVolumeUnsafe refuses paths that podman's --volume syntax cannot
+// express: it uses ':' to separate source, target, and options, and ','
+// to separate options, with no escaping mechanism.
+func rejectVolumeUnsafe(field, path string) error {
+	if i := strings.IndexAny(path, ":,"); i >= 0 {
+		return fmt.Errorf("%s %q contains %q, which podman volume syntax uses as a separator and cannot escape; rename the path", field, path, string(path[i]))
+	}
+	return nil
 }
 
 // validate checks the fully merged result.

@@ -80,6 +80,11 @@ without a manifest for throwaway environments, and
 (built-in defaults < `~/.config/bothy/config.yaml` `defaults:` < manifest <
 flags).
 
+If the global defaults or the manifest file change after a bothy was
+created, `enter`/`run` print a drift warning suggesting a recreate. The
+check covers the declarative file layers only; one-off `create` flags are
+not declared state and never count as drift.
+
 ## Manifest reference (schema_version 1)
 
 | Field | Default | Meaning |

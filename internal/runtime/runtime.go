@@ -52,7 +52,10 @@ type CreateSpec struct {
 	Mounts               []Mount
 	ExtraArgs            []string
 	Image                string
-	Entrypoint           []string // command and args placed after the image
+	// Entrypoint is emitted as --entrypoint in JSON-array exec form, so it
+	// replaces any image-defined ENTRYPOINT rather than being swallowed by
+	// one as arguments.
+	Entrypoint []string
 }
 
 // ExecSpec describes a command to run in an existing container.

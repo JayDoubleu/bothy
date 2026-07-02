@@ -295,9 +295,15 @@ func createArgs(spec CreateSpec) []string {
 		}
 		args = append(args, "--volume", m.Source+":"+m.Target+opts)
 	}
+	// The entrypoint must be forced with --entrypoint (JSON-array exec
+	// form): passed as the container command instead, an image-defined
+	// ENTRYPOINT (postgres, node, ...) would swallow it as "$@".
+	if len(spec.Entrypoint) > 0 {
+		ep, _ := json.Marshal(spec.Entrypoint) // a []string cannot fail to marshal
+		args = append(args, "--entrypoint", string(ep))
+	}
 	args = append(args, spec.ExtraArgs...)
 	args = append(args, spec.Image)
-	args = append(args, spec.Entrypoint...)
 	return args
 }
 

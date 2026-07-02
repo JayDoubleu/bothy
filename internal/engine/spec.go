@@ -22,7 +22,13 @@ const (
 	LabelName          = labelPrefix + "name"
 	LabelSchemaVersion = labelPrefix + "schema-version"
 	LabelHome          = labelPrefix + "home"
-	LabelConfigHash    = labelPrefix + "config-hash"
+	// LabelConfigHash stores the ManifestHash of the declarative layers
+	// (global defaults + manifest file) resolved at create time; enter/run
+	// recompute it from the same files to detect drift.
+	LabelConfigHash = labelPrefix + "config-hash"
+	// LabelManifest records the manifest path used at create time ("" for
+	// --image-only creates), so drift detection knows which file to reload.
+	LabelManifest = labelPrefix + "manifest"
 	// LabelStamp holds the readiness-stamp nonce generated at create time.
 	// The init process writes ready-<nonce> into the bothy home and
 	// create/enter/run poll for it. A nonce is used rather than the
@@ -40,6 +46,10 @@ const ContainerPrefix = "bothy-"
 // BinaryMountPath is where the bothy binary is bind mounted (read-only)
 // inside every container so it can serve as the init entrypoint.
 const BinaryMountPath = "/usr/libexec/bothy"
+
+// EnvMarker is the reserved environment variable holding the bothy name
+// inside every container, set at create time and again at exec time.
+const EnvMarker = "BOTHY"
 
 // ContainerName returns the container name for a bothy name.
 func ContainerName(name string) string {
@@ -59,17 +69,34 @@ func ContainerHome(u User) string {
 	return "/home/" + u.Username
 }
 
-// ConfigHash returns the sha256 of the resolved config in its canonical
-// serialization (JSON: fixed struct field order, sorted map keys). It is
-// stored in the config-hash label and compared on enter/run to detect
-// drift between the manifest and the running container.
-func ConfigHash(cfg *config.Config) (string, error) {
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return "", fmt.Errorf("cannot serialize config: %w", err)
+// ManifestHash returns a sha256 over the canonical JSON serialization of
+// the declarative manifest layers (global defaults, then the manifest
+// file), nil layers skipped. One-off CLI flags are create-time inputs, not
+// declared state, and are deliberately excluded so they cannot trigger
+// drift warnings. Stored in the config-hash label and recomputed from the
+// same files on enter/run.
+func ManifestHash(layers ...*config.Manifest) (string, error) {
+	h := sha256.New()
+	for _, layer := range layers {
+		if layer == nil {
+			continue
+		}
+		data, err := json.Marshal(layer)
+		if err != nil {
+			return "", fmt.Errorf("cannot serialize manifest layer: %w", err)
+		}
+		h.Write(data)
+		h.Write([]byte{0}) // layer separator
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// CreateMeta records the declarative inputs of a create for drift
+// detection: the manifest path used ("" for --image-only creates) and the
+// ManifestHash of the declarative layers.
+type CreateMeta struct {
+	ManifestPath string
+	ManifestHash string
 }
 
 // BuildCreateSpec maps a resolved config to a runtime CreateSpec. exePath
@@ -77,12 +104,7 @@ func ConfigHash(cfg *config.Config) (string, error) {
 // stamp is the readiness-stamp nonce (see LabelStamp). The returned
 // warnings are user-facing notes, currently one per enabled but not yet
 // implemented integration toggle.
-func BuildCreateSpec(name string, cfg *config.Config, exePath string, u User, stamp string) (runtime.CreateSpec, []string, error) {
-	hash, err := ConfigHash(cfg)
-	if err != nil {
-		return runtime.CreateSpec{}, nil, err
-	}
-
+func BuildCreateSpec(name string, cfg *config.Config, exePath string, u User, stamp string, meta CreateMeta) (runtime.CreateSpec, []string, error) {
 	var warnings []string
 	mounts := []runtime.Mount{
 		// The bothy's private home. The real host home is never mounted.
@@ -120,7 +142,7 @@ func BuildCreateSpec(name string, cfg *config.Config, exePath string, u User, st
 	// Marker for scripts and dotfiles to detect they are inside a bothy
 	// (and which one), like TOOLBOX_PATH / DISTROBOX_ENTER_PATH in the
 	// neighbouring tools. Reserved: set last so config env cannot mask it.
-	env["BOTHY"] = name
+	env[EnvMarker] = name
 
 	var network string
 	switch cfg.Network {
@@ -153,7 +175,8 @@ func BuildCreateSpec(name string, cfg *config.Config, exePath string, u User, st
 			LabelName:          name,
 			LabelSchemaVersion: strconv.Itoa(config.SupportedSchemaVersion),
 			LabelHome:          cfg.Home,
-			LabelConfigHash:    hash,
+			LabelConfigHash:    meta.ManifestHash,
+			LabelManifest:      meta.ManifestPath,
 			LabelStamp:         stamp,
 		},
 		Userns: "keep-id",

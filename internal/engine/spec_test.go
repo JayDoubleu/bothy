@@ -29,9 +29,13 @@ func testUser() User {
 	return User{Username: "alice", UID: 1000, GID: 1000, Shell: "/usr/bin/zsh"}
 }
 
+func testMeta() CreateMeta {
+	return CreateMeta{ManifestPath: "/testhome/.config/bothy/work.yaml", ManifestHash: "testhash"}
+}
+
 func TestBuildCreateSpec(t *testing.T) {
 	cfg := testConfig()
-	spec, warnings, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp")
+	spec, warnings, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp", testMeta())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,16 +56,13 @@ func TestBuildCreateSpec(t *testing.T) {
 		t.Errorf("env = %v (config env plus the reserved BOTHY marker)", spec.Env)
 	}
 
-	hash, err := ConfigHash(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
 	wantLabels := map[string]string{
 		"com.github.jaydoubleu.bothy.managed":        "true",
 		"com.github.jaydoubleu.bothy.name":           "work",
 		"com.github.jaydoubleu.bothy.schema-version": "1",
 		"com.github.jaydoubleu.bothy.home":           cfg.Home,
-		"com.github.jaydoubleu.bothy.config-hash":    hash,
+		"com.github.jaydoubleu.bothy.config-hash":    "testhash",
+		"com.github.jaydoubleu.bothy.manifest":       "/testhome/.config/bothy/work.yaml",
 		"com.github.jaydoubleu.bothy.stamp":          "teststamp",
 	}
 	if !reflect.DeepEqual(spec.Labels, wantLabels) {
@@ -100,7 +101,7 @@ func TestBuildCreateSpecNetworkMapping(t *testing.T) {
 	} {
 		cfg := testConfig()
 		cfg.Network = network
-		spec, _, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp")
+		spec, _, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp", testMeta())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +115,7 @@ func TestBuildCreateSpecStubbedIntegrationsWarn(t *testing.T) {
 	cfg := testConfig()
 	cfg.Integration.GUI = true
 	cfg.Integration.SSHAgent = true
-	spec, warnings, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp")
+	spec, warnings, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp", testMeta())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +138,7 @@ func TestBuildCreateSpecOverlayMount(t *testing.T) {
 	cfg.Mounts = []config.ResolvedMount{
 		{Source: "/testhome/devel", Target: "/home/alice/devel", Mode: "overlay"},
 	}
-	spec, warnings, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp")
+	spec, warnings, err := BuildCreateSpec("work", cfg, "/usr/bin/bothy", testUser(), "teststamp", testMeta())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,25 +168,63 @@ func TestBuildCreateSpecOverlayMount(t *testing.T) {
 	}
 }
 
-func TestConfigHashDeterministicAndSensitive(t *testing.T) {
-	a, err := ConfigHash(testConfig())
+func TestManifestHash(t *testing.T) {
+	defaults := &config.Manifest{Env: map[string]string{"EDITOR": "nvim"}}
+	manifest := &config.Manifest{
+		SchemaVersion: 1,
+		Image:         "fedora:42",
+		Mounts:        []config.Mount{{Source: "~/.config/nvim"}},
+	}
+
+	a, err := ManifestHash(defaults, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ConfigHash(testConfig())
+	b, err := ManifestHash(defaults, manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a != b {
 		t.Errorf("hash is not deterministic: %s vs %s", a, b)
 	}
-	changed := testConfig()
-	changed.Env["NEW"] = "value"
-	c, err := ConfigHash(changed)
+
+	changed := &config.Manifest{
+		SchemaVersion: 1,
+		Image:         "fedora:43",
+		Mounts:        []config.Mount{{Source: "~/.config/nvim"}},
+	}
+	c, err := ManifestHash(defaults, changed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if a == c {
-		t.Errorf("hash did not change with the config")
+		t.Errorf("hash did not change with the manifest")
+	}
+
+	// A nil layer must hash like an absent layer, so --image-only creates
+	// (no manifest file) and missing global defaults are stable.
+	d, err := ManifestHash(nil, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := ManifestHash(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d != e {
+		t.Errorf("nil layer changed the hash: %s vs %s", d, e)
+	}
+}
+
+func TestOverlayDirsDistinctForCollidingTargets(t *testing.T) {
+	aUpper, aWork := OverlayDirs("/home/x", "/home/alice/a-b")
+	bUpper, bWork := OverlayDirs("/home/x", "/home/alice/a/b")
+	if aUpper == bUpper || aWork == bWork {
+		t.Errorf("targets a-b and a/b collide: %s vs %s", aUpper, bUpper)
+	}
+	// Still a pure function of the target, so reordering keeps deltas.
+	aUpper2, _ := OverlayDirs("/home/x", "/home/alice/a-b")
+	if aUpper != aUpper2 {
+		t.Errorf("OverlayDirs is not deterministic: %s vs %s", aUpper, aUpper2)
 	}
 }

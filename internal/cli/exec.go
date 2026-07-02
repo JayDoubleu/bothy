@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/jaydoubleu/bothy/internal/config"
 	"github.com/jaydoubleu/bothy/internal/engine"
@@ -56,9 +57,9 @@ func runExec(ctx context.Context, name string, command []string, tty bool) error
 		return err
 	}
 	env := map[string]string{
-		"HOME":  engine.ContainerHome(u),
-		"USER":  u.Username,
-		"BOTHY": name,
+		"HOME":           engine.ContainerHome(u),
+		"USER":           u.Username,
+		engine.EnvMarker: name,
 	}
 	if term := os.Getenv("TERM"); term != "" && tty {
 		env["TERM"] = term
@@ -84,44 +85,72 @@ func ensureRunning(ctx context.Context, rt runtime.Runtime, name string) (*runti
 	if err != nil {
 		return nil, err
 	}
+	if err := requireManaged(c); err != nil {
+		return nil, err
+	}
 
 	warnOnDrift(name, c)
-
-	if !c.Running {
-		if err := rt.Start(ctx, c.Name); err != nil {
-			return nil, err
-		}
-	}
 
 	home := c.Labels[engine.LabelHome]
 	stamp := c.Labels[engine.LabelStamp]
 	if home == "" || stamp == "" {
 		return nil, fmt.Errorf("container %s is missing bothy labels; was it created by bothy?", c.Name)
 	}
+	stampPath := engine.ReadyStampPath(home, stamp)
+
+	if !c.Running {
+		// The stamp on disk is from the previous boot; remove it so
+		// readiness gates on this boot's init actually finishing.
+		if err := os.Remove(stampPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("cannot clear stale readiness stamp: %w", err)
+		}
+		if err := rt.Start(ctx, c.Name); err != nil {
+			return nil, err
+		}
+	}
+
 	waitCtx, cancel := context.WithTimeout(ctx, enterReadyTimeout)
 	defer cancel()
-	if err := engine.WaitReady(waitCtx, engine.ReadyStampPath(home, stamp)); err != nil {
+	alive := func() (bool, error) {
+		cur, err := rt.Inspect(ctx, c.Name)
+		if err != nil {
+			return false, err
+		}
+		return cur.Running, nil
+	}
+	if err := engine.WaitReady(waitCtx, stampPath, alive); err != nil {
 		return nil, fmt.Errorf("%w\ncheck \"podman logs %s\" for details", err, c.Name)
 	}
 	return c, nil
 }
 
-// warnOnDrift compares the hash of the currently resolved config against
-// the config-hash label baked in at create time. Best-effort: a bothy
-// created from a manifest outside ~/.config/bothy cannot be checked.
+// warnOnDrift recomputes the hash of the declarative config layers (global
+// defaults + the manifest file recorded at create time) and compares it to
+// the config-hash label. Best-effort by design: no manifest label (an
+// --image-only create) or a manifest that no longer loads means nothing to
+// compare, and the check is silently skipped.
 func warnOnDrift(name string, c *runtime.Container) {
-	path, err := config.DefaultManifestPath(name)
+	manifestPath := c.Labels[engine.LabelManifest]
+	if manifestPath == "" {
+		return
+	}
+	globalPath, err := config.GlobalConfigPath()
 	if err != nil {
 		return
 	}
-	if _, err := os.Stat(path); err != nil {
-		return
-	}
-	cfg, err := resolveConfig(name, "", nil, true)
+	global, err := config.LoadGlobal(globalPath)
 	if err != nil {
 		return
 	}
-	hash, err := engine.ConfigHash(cfg)
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		return
+	}
+	var defaults *config.Manifest
+	if global != nil {
+		defaults = global.Defaults
+	}
+	hash, err := engine.ManifestHash(defaults, manifest)
 	if err != nil {
 		return
 	}
@@ -134,6 +163,5 @@ func warnOnDrift(name string, c *runtime.Container) {
 }
 
 func isTerminal(f *os.File) bool {
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }

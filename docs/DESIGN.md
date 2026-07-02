@@ -135,9 +135,10 @@ Merge semantics per field kind:
   apply and manifests add to them.
 - **Maps** (`env`): merged per key, later layers winning on conflicts.
 
-`bothy config show <name>` prints the fully resolved config as YAML, which is
-also exactly the value that gets hashed into the drift-detection label
-(section 5).
+`bothy config show <name>` prints the fully resolved config as YAML. It
+accepts the same override flags as `create`, so it previews exactly what a
+create with those flags would resolve. (Drift detection hashes the
+declarative file layers, not this resolved value; see section 5.)
 
 ### Schema
 
@@ -214,15 +215,22 @@ extra_podman_args: []
 Path expansion rules: `~` in host-side fields (`home`, `mounts[].source`)
 expands against the real host home. `~` in `mounts[].target` expands against
 the container home, `/home/<username>`, because that is where the path will
-resolve when used.
+resolve when used. Paths that end up in podman `--volume` arguments (`home`,
+mount sources and targets) must not contain `:` or `,`: podman's volume
+syntax uses them as separators with no escaping, so validation rejects such
+paths with a clear error instead of producing a garbled mount.
 
 ### Overlay mounts (copy-on-write)
 
 `mode: overlay` uses podman's overlay volume option (`-v src:dst:O`) with
 explicit `upperdir`/`workdir` so the delta persists. The upper and work
 directories live under the bothy home at
-`.local/state/bothy/overlays/<target-slug>/`, keyed by target path so a
-reordered manifest keeps its deltas, and they share the home's lifecycle:
+`.local/state/bothy/overlays/<target-slug>-<digest>/`, where the slug is
+the target path with slashes flattened and the digest is the first 8 hex
+chars of sha256(target). The digest keeps the key injective (the readable
+slug alone would collide for targets like `~/a-b` and `~/a/b`) while
+remaining a pure function of the target path, so a reordered manifest
+keeps its deltas. The directories share the home's lifecycle:
 `rm` deletes the delta, `rm --keep-home` preserves it, and it survives
 container stop/start. `create` prints a warning whenever overlay mounts are
 present, because the trade-off inverts bothy's usual posture: the bothy can
@@ -315,12 +323,18 @@ name clashes; labels, not names, are the source of truth for management:
 | `com.github.jaydoubleu.bothy.name` | the bothy name |
 | `com.github.jaydoubleu.bothy.schema-version` | `1` |
 | `com.github.jaydoubleu.bothy.home` | host path of the bothy home |
-| `com.github.jaydoubleu.bothy.config-hash` | sha256 of the resolved config |
+| `com.github.jaydoubleu.bothy.config-hash` | sha256 of the declarative config layers (see below) |
+| `com.github.jaydoubleu.bothy.manifest` | manifest path used at create time, empty for `--image-only` creates |
 | `com.github.jaydoubleu.bothy.stamp` | readiness-stamp nonce (see init, step 5) |
 
-The config hash is computed over the fully resolved config (post-merge,
-post-expansion) serialized canonically as JSON with sorted map keys, so that
-semantically identical configs always hash identically.
+The config hash covers the DECLARATIVE layers only: the global `defaults:`
+block and the manifest file, each serialized canonically as JSON (fixed
+field order, sorted map keys) and hashed in layer order. One-off CLI flags
+are create-time inputs, not declared state, and are excluded on both sides
+of the comparison; by construction, creating with `--gui` and entering
+without it is not drift. The manifest label records which file to reload
+when checking, so bothies created via `-f` anywhere are covered, not just
+those with manifests at the default path.
 
 ### create
 
@@ -331,9 +345,16 @@ semantically identical configs always hash identically.
    `--name bothy-<name>`, labels, `--userns=keep-id`,
    `--security-opt label=disable`, `--ulimit host`, `--user root:root`,
    the home mount, all declared mounts, integration mounts (once implemented),
-   the network flag, `--hostname`, env, then `extra_podman_args`, then the
-   image, then the entrypoint `/usr/libexec/bothy init`.
-5. `podman create`, `podman start`, then poll for init readiness.
+   the network flag, `--hostname`, env, the init entrypoint as
+   `--entrypoint '["/usr/libexec/bothy","init",...]'` (JSON-array exec
+   form, so an image-defined ENTRYPOINT like postgres's is replaced rather
+   than swallowing the init vector as arguments), then `extra_podman_args`,
+   then the image.
+5. `podman create`, `podman start`, then poll for init readiness. The poll
+   also checks container liveness every couple of seconds, so an image
+   where init cannot work (alpine without useradd, say) fails in seconds
+   with "container exited during initialization" instead of burning the
+   whole timeout.
 
 Every bothy also gets a reserved `BOTHY=<name>` environment variable, set at
 create time and again at exec time, so scripts and dotfiles shared into a
@@ -361,19 +382,25 @@ up the system; `enter`/`run` exec as the real user.
 
 `bothy init`, running as PID 1 in the container:
 
-1. **Ensure the user exists** with the host's username, UID, and GID:
-   `useradd --home-dir /home/<user> --no-create-home --password '' --shell
-   <shell> --uid <uid>`, falling back to `usermod` if a user with that name
-   already exists in the image. If the host's shell does not exist in the
-   image, fall back to `/bin/bash`, then `/bin/sh`. `--no-create-home` because
-   the home is a mount that already exists.
+1. **Ensure the user exists** with the host's username, UID, and GID. If
+   the image ships a user squatting on the UID under another name (ubuntu's
+   `ubuntu` at 1000), rename it first with `usermod --login`,
+   toolbox/distrobox style. Then `useradd --home-dir /home/<user>
+   --no-create-home --password '' --shell <shell> --uid <uid>`, falling
+   back to `usermod` if a user with that name already exists in the image.
+   If the host's shell does not exist in the image, fall back to
+   `/bin/bash`, then `/bin/sh`. `--no-create-home` because the home is a
+   mount that already exists.
 2. **Grant sudo**: a sudoers drop-in with `NOPASSWD:ALL` (distrobox style),
    which is the honest posture for a rootless dev container where root inside
    the container is not a privilege boundary anyway.
 3. **Best-effort locale setup** (planned; not in the walking skeleton yet).
 4. **Install `packages:`** using whichever of dnf, apt-get, or pacman the
-   image has. Failures are logged and do not abort init: an unreachable mirror
-   should not brick the environment.
+   image has, but only on the container's first boot: a marker at
+   `/var/lib/bothy/init-done` in the container's writable layer (which
+   survives stop/start but dies with the container) skips the install on
+   restarts. Failures are logged and do not abort init: an unreachable
+   mirror should not brick the environment.
 5. **Write the readiness stamp** at
    `<bothy home>/.cache/bothy/ready-<nonce>`, where the nonce is a random
    value generated by `create`, passed to init via `--stamp`, and recorded in
@@ -391,18 +418,27 @@ up the system; `enter`/`run` exec as the real user.
 
 ### enter and run
 
-Both commands share one path: `podman start` if the container is not running,
-poll the readiness stamp on the host side (with a timeout and a useful error
-pointing at `podman logs`), then `podman exec --user <user> -it` with `HOME`,
-`USER`, `SHELL`, and configured `env` set.
+Both commands share one path: `podman start` if the container is not running
+(removing the previous boot's stale readiness stamp first, so readiness gates
+on the new boot's init actually finishing), poll the readiness stamp on the
+host side (with a timeout, a liveness check that fails fast when the
+container has exited, and a useful error pointing at `podman logs`), then
+`podman exec --user <user> -it` with `HOME`, `USER`, `SHELL`, and configured
+`env` set. A real TTY check (`x/term.IsTerminal`) decides whether to allocate
+a container TTY, so redirected stdio (`bothy run x -- cat < /dev/null`) works
+instead of hanging on a half-attached terminal.
 
 `enter` resolves the user's login shell inside the container via
 `getent passwd` and execs it as a login shell. `run` execs the given argv and
 propagates the command's exit code as bothy's own exit code.
 
-Before exec, both commands compare the container's `config-hash` label against
-the hash of the currently resolved config. On mismatch they print a clear
-warning:
+Before exec, both commands recompute the hash of the declarative config
+layers (global `defaults:` plus the manifest file recorded in the manifest
+label; see the label table) and compare it against the `config-hash` label.
+The check is best-effort and silently skipped when there is nothing to
+compare: an `--image-only` create declared no manifest, and a manifest file
+that has since been moved or deleted cannot be reloaded. On mismatch they
+print a clear warning:
 
 ```
 warning: the configuration of "work" has changed since this container was created;
@@ -420,6 +456,13 @@ a future `bothy recreate` (section 8) would make this one command.
 - `rm`: `podman rm -f bothy-<name>`, then delete the bothy home directory read
   from the `.home` label. Deletion prompts interactively; `--keep-home`
   preserves the home, `--force`/`-y` skips the prompt.
+
+Because labels, not names, are the source of truth, every command that
+operates on an existing container (`enter`, `run`, `stop`, `rm`) first
+checks the `managed=true` label and refuses to touch a container that
+merely squats on the `bothy-` name prefix; `create` likewise explains that
+the name is taken rather than advising `bothy rm` against a container it
+does not manage.
 
 ### Podman preflight
 

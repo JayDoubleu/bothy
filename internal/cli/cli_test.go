@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jaydoubleu/bothy/internal/engine"
@@ -164,9 +166,12 @@ func TestRmForceDeletesHome(t *testing.T) {
 	}
 	fake := runtime.NewFake()
 	fake.Containers["bothy-work"] = &runtime.Container{
-		ID:     "abc",
-		Name:   "bothy-work",
-		Labels: map[string]string{engine.LabelHome: home},
+		ID:   "abc",
+		Name: "bothy-work",
+		Labels: map[string]string{
+			engine.LabelManaged: "true",
+			engine.LabelHome:    home,
+		},
 	}
 
 	if err := runCLI(t, fake, "rm", "work", "--force"); err != nil {
@@ -183,15 +188,51 @@ func TestRmRefusesRealHome(t *testing.T) {
 
 	fake := runtime.NewFake()
 	fake.Containers["bothy-evil"] = &runtime.Container{
-		ID:     "abc",
-		Name:   "bothy-evil",
-		Labels: map[string]string{engine.LabelHome: tmp},
+		ID:   "abc",
+		Name: "bothy-evil",
+		Labels: map[string]string{
+			engine.LabelManaged: "true",
+			engine.LabelHome:    tmp,
+		},
 	}
 	if err := runCLI(t, fake, "rm", "evil", "--force"); err == nil {
 		t.Fatal("rm must refuse to delete the real home directory")
 	}
 	if _, err := os.Stat(tmp); err != nil {
 		t.Errorf("real home was touched: %v", err)
+	}
+}
+
+func TestUnmanagedContainerRefused(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// A container that merely squats on the bothy- name prefix, without the
+	// managed label: rm, stop, and run must all refuse to touch it, and
+	// create must not advise "bothy rm".
+	fake := runtime.NewFake()
+	fake.Containers["bothy-foo"] = &runtime.Container{ID: "abc", Name: "bothy-foo"}
+
+	for _, args := range [][]string{
+		{"rm", "foo", "--force"},
+		{"stop", "foo"},
+		{"run", "foo", "--", "true"},
+	} {
+		err := runCLI(t, fake, args...)
+		if err == nil || !strings.Contains(err.Error(), "not created by bothy") {
+			t.Errorf("%v: err = %v, want unmanaged refusal", args, err)
+		}
+	}
+	if len(fake.Removed) != 0 || len(fake.Stopped) != 0 || len(fake.Started) != 0 || len(fake.ExecSpecs) != 0 {
+		t.Errorf("unmanaged container was touched: %+v", fake)
+	}
+
+	err := runCLI(t, fake, "create", "foo", "--image", "fedora:42")
+	if err == nil || !strings.Contains(err.Error(), "does not manage") {
+		t.Errorf("create: err = %v, want name-taken explanation", err)
+	}
+	if strings.Contains(fmt.Sprint(err), "bothy rm") {
+		t.Errorf("create must not advise \"bothy rm\" for an unmanaged name collision: %v", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -24,11 +25,15 @@ func NewStamp() (string, error) {
 // overlay mount at the given container target. They live under the bothy
 // home so the copy-on-write delta shares the home's lifecycle: rm deletes
 // it, rm --keep-home preserves it. Keyed by target path (not mount index)
-// so a reordered manifest keeps its deltas. Note the kernel requires the
-// upper dir to be outside the overlay's source tree, so an overlay of a
-// directory that contains the bothy home itself cannot work.
+// so a reordered manifest keeps its deltas; a digest suffix keeps the key
+// injective, because the readable slug alone would collide for targets
+// like ~/a-b and ~/a/b. Note the kernel requires the upper dir to be
+// outside the overlay's source tree, so an overlay of a directory that
+// contains the bothy home itself cannot work.
 func OverlayDirs(homeDir, target string) (upper, work string) {
-	slug := strings.Trim(strings.ReplaceAll(target, "/", "-"), "-")
+	readable := strings.Trim(strings.ReplaceAll(target, "/", "-"), "-")
+	sum := sha256.Sum256([]byte(target))
+	slug := readable + "-" + hex.EncodeToString(sum[:])[:8]
 	base := filepath.Join(homeDir, ".local", "state", "bothy", "overlays", slug)
 	return filepath.Join(base, "upper"), filepath.Join(base, "work")
 }
@@ -44,13 +49,30 @@ func ReadyStampPath(homeDir, stamp string) string {
 }
 
 // WaitReady polls for the readiness stamp until it appears or the context
-// expires.
-func WaitReady(ctx context.Context, path string) error {
+// expires. Every couple of seconds it also asks the alive callback (nil to
+// skip) whether the container is still running, so a crashed init fails
+// fast instead of burning the whole timeout. Callback errors are treated
+// as "don't know" and polling continues.
+func WaitReady(ctx context.Context, path string, alive func() (bool, error)) error {
+	const livenessInterval = 2 * time.Second
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	lastLiveness := time.Now()
 	for {
 		if _, err := os.Stat(path); err == nil {
 			return nil
+		}
+		if alive != nil && time.Since(lastLiveness) >= livenessInterval {
+			lastLiveness = time.Now()
+			if running, err := alive(); err == nil && !running {
+				// Init may have written the stamp and exited between our
+				// stat and the liveness check; look once more before
+				// declaring failure.
+				if _, err := os.Stat(path); err == nil {
+					return nil
+				}
+				return fmt.Errorf("container exited during initialization")
+			}
 		}
 		select {
 		case <-ctx.Done():

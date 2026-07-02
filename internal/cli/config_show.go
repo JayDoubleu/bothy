@@ -18,16 +18,26 @@ func newConfigCmd() *cobra.Command {
 
 func newConfigShowCmd() *cobra.Command {
 	var file string
+	flags := &overrideFlags{}
 	cmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Print the fully resolved configuration for a bothy",
-		Args:  cobra.ExactArgs(1),
+		Long: "Print the fully resolved configuration for a bothy.\n\n" +
+			"Accepts the same override flags as create, so the output previews\n" +
+			"exactly what a create with those flags would resolve. Note that\n" +
+			"drift detection on enter/run covers only the file layers (global\n" +
+			"defaults + manifest), never one-off flags.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := resolveConfig(args[0], file, nil, true)
+			overlay, err := flags.manifest()
 			if err != nil {
 				return err
 			}
-			out, err := yaml.Marshal(cfg)
+			res, err := resolveConfig(args[0], file, overlay, false)
+			if err != nil {
+				return err
+			}
+			out, err := yaml.Marshal(res.cfg)
 			if err != nil {
 				return err
 			}
@@ -36,5 +46,6 @@ func newConfigShowCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&file, "file", "f", "", "manifest path (default ~/.config/bothy/<name>.yaml)")
+	flags.register(cmd)
 	return cmd
 }

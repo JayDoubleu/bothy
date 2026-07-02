@@ -3,3 +3,4 @@
 *.test
 coverage.out
 .claude/
+/GOLIVE.md

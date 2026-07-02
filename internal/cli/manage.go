@@ -40,14 +40,15 @@ func runList(ctx context.Context) error {
 	}
 	sort.Slice(containers, func(i, j int) bool { return containers[i].Name < containers[j].Name })
 
+	// Write errors surface once, at Flush.
 	w := tabwriter.NewWriter(os.Stdout, 2, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tIMAGE\tSTATUS")
+	_, _ = fmt.Fprintln(w, "NAME\tIMAGE\tSTATUS")
 	for _, c := range containers {
 		name := c.Labels[engine.LabelName]
 		if name == "" {
 			name = strings.TrimPrefix(c.Name, engine.ContainerPrefix)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", name, c.Image, c.Status)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", name, c.Image, c.Status)
 	}
 	return w.Flush()
 }
@@ -167,5 +168,20 @@ func inspectBothy(ctx context.Context, rt runtime.Runtime, name string) (*runtim
 	if errors.Is(err, runtime.ErrNotFound) {
 		return nil, fmt.Errorf("no bothy named %q", name)
 	}
-	return c, err
+	if err != nil {
+		return nil, err
+	}
+	if err := requireManaged(c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// requireManaged refuses to operate on containers that merely share the
+// bothy- name prefix; the managed label is the source of truth.
+func requireManaged(c *runtime.Container) error {
+	if c.Labels[engine.LabelManaged] != "true" {
+		return fmt.Errorf("container %s exists but was not created by bothy; refusing to touch it", c.Name)
+	}
+	return nil
 }

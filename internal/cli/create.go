@@ -50,8 +50,11 @@ func runCreate(ctx context.Context, name, file string, flags *overrideFlags) err
 	}
 
 	containerName := engine.ContainerName(name)
-	if _, err := rt.Inspect(ctx, containerName); err == nil {
-		return fmt.Errorf("bothy %q already exists (remove it with \"bothy rm %s\")", name, name)
+	if c, err := rt.Inspect(ctx, containerName); err == nil {
+		if c.Labels[engine.LabelManaged] == "true" {
+			return fmt.Errorf("bothy %q already exists (remove it with \"bothy rm %s\")", name, name)
+		}
+		return fmt.Errorf("container name %q is taken by a container bothy does not manage; pick another bothy name", containerName)
 	} else if !errors.Is(err, runtime.ErrNotFound) {
 		return err
 	}
@@ -60,10 +63,11 @@ func runCreate(ctx context.Context, name, file string, flags *overrideFlags) err
 	if err != nil {
 		return err
 	}
-	cfg, err := resolveConfig(name, file, overlay, false)
+	res, err := resolveConfig(name, file, overlay, false)
 	if err != nil {
 		return err
 	}
+	cfg := res.cfg
 
 	u, err := hostUser()
 	if err != nil {
@@ -85,7 +89,12 @@ func runCreate(ctx context.Context, name, file string, flags *overrideFlags) err
 	if err != nil {
 		return err
 	}
-	spec, warnings, err := engine.BuildCreateSpec(name, cfg, exe, u, stamp)
+	hash, err := engine.ManifestHash(res.defaults, res.manifest)
+	if err != nil {
+		return err
+	}
+	meta := engine.CreateMeta{ManifestPath: res.manifestPath, ManifestHash: hash}
+	spec, warnings, err := engine.BuildCreateSpec(name, cfg, exe, u, stamp, meta)
 	if err != nil {
 		return err
 	}
@@ -127,7 +136,14 @@ func runCreate(ctx context.Context, name, file string, flags *overrideFlags) err
 	fmt.Fprintln(os.Stderr, "waiting for container initialization...")
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if err := engine.WaitReady(waitCtx, engine.ReadyStampPath(cfg.Home, stamp)); err != nil {
+	alive := func() (bool, error) {
+		c, err := rt.Inspect(ctx, containerName)
+		if err != nil {
+			return false, err
+		}
+		return c.Running, nil
+	}
+	if err := engine.WaitReady(waitCtx, engine.ReadyStampPath(cfg.Home, stamp), alive); err != nil {
 		return fmt.Errorf("%w\ncheck \"podman logs %s\" for details", err, containerName)
 	}
 

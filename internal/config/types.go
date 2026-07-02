@@ -9,40 +9,42 @@ const SupportedSchemaVersion = 1
 // Manifest mirrors the on-disk YAML schema. It is also the shape of the
 // "defaults:" block in the global config and of CLI flag overlays, so
 // every field must be able to represent "unset": strings and slices use
-// their zero value, integration toggles use pointers.
+// their zero value, integration toggles use pointers. The JSON tags give
+// manifest layers a canonical serialization for drift hashing (see
+// engine.ManifestHash).
 type Manifest struct {
-	SchemaVersion   int               `yaml:"schema_version,omitempty"`
-	Image           string            `yaml:"image,omitempty"`
-	Hostname        string            `yaml:"hostname,omitempty"`
-	Home            string            `yaml:"home,omitempty"`
-	Mounts          []Mount           `yaml:"mounts,omitempty"`
-	Integration     Integration       `yaml:"integration,omitempty"`
-	Network         string            `yaml:"network,omitempty"`
-	Env             map[string]string `yaml:"env,omitempty"`
-	Packages        []string          `yaml:"packages,omitempty"`
-	ExtraPodmanArgs []string          `yaml:"extra_podman_args,omitempty"`
+	SchemaVersion   int               `yaml:"schema_version,omitempty" json:"schema_version,omitempty"`
+	Image           string            `yaml:"image,omitempty" json:"image,omitempty"`
+	Hostname        string            `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	Home            string            `yaml:"home,omitempty" json:"home,omitempty"`
+	Mounts          []Mount           `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+	Integration     Integration       `yaml:"integration,omitempty" json:"integration,omitempty"`
+	Network         string            `yaml:"network,omitempty" json:"network,omitempty"`
+	Env             map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Packages        []string          `yaml:"packages,omitempty" json:"packages,omitempty"`
+	ExtraPodmanArgs []string          `yaml:"extra_podman_args,omitempty" json:"extra_podman_args,omitempty"`
 }
 
 // Mount declares a single host path shared into the bothy. Target defaults
 // to the source path (expanded against the container home) and Mode
 // defaults to "ro"; "rw" and "overlay" are the other modes.
 type Mount struct {
-	Source string `yaml:"source"`
-	Target string `yaml:"target,omitempty"`
-	Mode   string `yaml:"mode,omitempty"`
+	Source string `yaml:"source" json:"source"`
+	Target string `yaml:"target,omitempty" json:"target,omitempty"`
+	Mode   string `yaml:"mode,omitempty" json:"mode,omitempty"`
 }
 
 // Integration holds the host-integration toggles. Pointers distinguish
 // "unset" from an explicit false so a manifest can switch off a toggle
 // enabled in the global defaults.
 type Integration struct {
-	GUI      *bool `yaml:"gui,omitempty"`
-	Audio    *bool `yaml:"audio,omitempty"`
-	DBus     *bool `yaml:"dbus,omitempty"`
-	Devices  *bool `yaml:"devices,omitempty"`
-	Fonts    *bool `yaml:"fonts,omitempty"`
-	SSHAgent *bool `yaml:"ssh_agent,omitempty"`
-	Timezone *bool `yaml:"timezone,omitempty"`
+	GUI      *bool `yaml:"gui,omitempty" json:"gui,omitempty"`
+	Audio    *bool `yaml:"audio,omitempty" json:"audio,omitempty"`
+	DBus     *bool `yaml:"dbus,omitempty" json:"dbus,omitempty"`
+	Devices  *bool `yaml:"devices,omitempty" json:"devices,omitempty"`
+	Fonts    *bool `yaml:"fonts,omitempty" json:"fonts,omitempty"`
+	SSHAgent *bool `yaml:"ssh_agent,omitempty" json:"ssh_agent,omitempty"`
+	Timezone *bool `yaml:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 // GlobalConfig is ~/.config/bothy/config.yaml.
@@ -51,9 +53,9 @@ type GlobalConfig struct {
 }
 
 // Config is a fully resolved configuration: all layers merged, defaults
-// filled in, paths expanded. It is what gets hashed into the config-hash
-// label and turned into a container spec, so its serialized form must be
-// deterministic (fixed field order; the JSON encoder sorts map keys).
+// filled in, paths expanded. It is what gets turned into a container spec.
+// (Drift hashing works on the declarative Manifest layers, not on Config;
+// see engine.ManifestHash.)
 type Config struct {
 	Image           string              `yaml:"image" json:"image"`
 	Hostname        string              `yaml:"hostname" json:"hostname"`

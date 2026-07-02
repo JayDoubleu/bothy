@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -139,11 +140,23 @@ func parseMountFlag(s, mode string) config.Mount {
 	return config.Mount{Source: src, Target: dst, Mode: mode}
 }
 
+// resolution is the outcome of resolveConfig: the resolved config plus the
+// declarative layers that produced it, so create and drift detection hash
+// exactly the same inputs (see engine.ManifestHash).
+type resolution struct {
+	cfg *config.Config
+	// manifestPath is the manifest file that was loaded, "" when none was
+	// (an --image-only create).
+	manifestPath string
+	manifest     *config.Manifest // nil when no manifest file was loaded
+	defaults     *config.Manifest // global defaults layer, nil when absent
+}
+
 // resolveConfig loads the global defaults plus the manifest for name (from
 // file if given, otherwise the default path) and merges the overlay on top.
 // requireManifest controls whether a missing default-path manifest is an
 // error or simply an absent layer (create allows --image-only usage).
-func resolveConfig(name, file string, overlay *config.Manifest, requireManifest bool) (*config.Config, error) {
+func resolveConfig(name, file string, overlay *config.Manifest, requireManifest bool) (*resolution, error) {
 	globalPath, err := config.GlobalConfigPath()
 	if err != nil {
 		return nil, err
@@ -183,5 +196,18 @@ func resolveConfig(name, file string, overlay *config.Manifest, requireManifest 
 	if global != nil {
 		defaults = global.Defaults
 	}
-	return config.Resolve(config.ResolveOptions{Name: name, Username: u.Username}, defaults, manifest, overlay)
+	cfg, err := config.Resolve(config.ResolveOptions{Name: name, Username: u.Username}, defaults, manifest, overlay)
+	if err != nil {
+		return nil, err
+	}
+	res := &resolution{cfg: cfg, manifest: manifest, defaults: defaults}
+	if manifest != nil {
+		// Absolute, so the path recorded in the manifest label stays
+		// meaningful when later commands run from another directory.
+		if abs, err := filepath.Abs(manifestPath); err == nil {
+			manifestPath = abs
+		}
+		res.manifestPath = manifestPath
+	}
+	return res, nil
 }

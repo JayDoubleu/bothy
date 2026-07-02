@@ -24,6 +24,11 @@ type InitOptions struct {
 	Packages []string
 }
 
+// initDoneMarker lives in the container's writable layer, so it survives
+// stop/start but dies with the container: package installs run only on the
+// first boot of each container, not on every restart.
+const initDoneMarker = "/var/lib/bothy/init-done"
+
 // RunInit performs first-boot container setup and then blocks until the
 // container is stopped. Everything except user creation is best-effort:
 // failures are logged (visible via podman logs) but do not abort, so a
@@ -37,7 +42,12 @@ func RunInit(opts InitOptions) error {
 		return err
 	}
 	ensureSudoers(opts.Username)
-	installPackages(opts.Packages)
+	if _, err := os.Stat(initDoneMarker); err == nil {
+		log.Printf("packages: first boot already done; skipping install")
+	} else {
+		installPackages(opts.Packages)
+		markInitDone()
+	}
 	if err := writeReadyStamp(opts); err != nil {
 		return err
 	}
@@ -45,6 +55,18 @@ func RunInit(opts InitOptions) error {
 
 	waitForever()
 	return nil
+}
+
+// markInitDone is best-effort: a read-only /var/lib just means packages
+// get re-checked next boot.
+func markInitDone() {
+	if err := os.MkdirAll(filepath.Dir(initDoneMarker), 0o755); err != nil {
+		log.Printf("init marker: %v", err)
+		return
+	}
+	if err := os.WriteFile(initDoneMarker, []byte("done\n"), 0o644); err != nil {
+		log.Printf("init marker: %v", err)
+	}
 }
 
 // resolveShell falls back when the host shell does not exist in the image
@@ -71,6 +93,17 @@ func ensureUser(opts InitOptions, shell string) error {
 	// Best-effort group; useradd below references the GID numerically, so a
 	// pre-existing group with this GID is fine.
 	runLogged("groupadd", "--gid", gid, opts.Username)
+
+	// Some images ship a user squatting on the UID under another name
+	// (ubuntu:24.04 has "ubuntu" at 1000). Rename it to the host user,
+	// toolbox/distrobox style; the usermod fallback below then converges
+	// home, shell, and GID.
+	if out, err := run("getent", "passwd", uid); err == nil {
+		if existing, _, _ := strings.Cut(strings.TrimSpace(out), ":"); existing != "" && existing != opts.Username {
+			log.Printf("renaming existing uid-%s user %q to %q", uid, existing, opts.Username)
+			runLogged("usermod", "--login", opts.Username, existing)
+		}
+	}
 
 	if out, err := run("useradd",
 		"--home-dir", opts.Home,
@@ -119,7 +152,9 @@ func installPackages(packages []string) {
 	case commandExists("dnf"):
 		runLogged("dnf", append([]string{"install", "-y"}, packages...)...)
 	case commandExists("apt-get"):
-		os.Setenv("DEBIAN_FRONTEND", "noninteractive")
+		if err := os.Setenv("DEBIAN_FRONTEND", "noninteractive"); err != nil {
+			log.Printf("packages: %v", err)
+		}
 		runLogged("apt-get", "update")
 		runLogged("apt-get", append([]string{"install", "-y"}, packages...)...)
 	case commandExists("pacman"):
@@ -130,13 +165,15 @@ func installPackages(packages []string) {
 }
 
 // writeReadyStamp writes the readiness stamp into the bothy home, where the
-// host-side enter/run/create commands poll for it.
+// host-side enter/run/create commands poll for it. ReadyStampPath is the
+// single definition of where it lives; the container-side home mount makes
+// the in-container path identical to the host-side one.
 func writeReadyStamp(opts InitOptions) error {
-	dir := filepath.Join(opts.Home, ".cache", "bothy")
+	stamp := ReadyStampPath(opts.Home, opts.Stamp)
+	dir := filepath.Dir(stamp)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("cannot create %s: %w", dir, err)
 	}
-	stamp := filepath.Join(dir, "ready-"+opts.Stamp)
 	if err := os.WriteFile(stamp, []byte("ready\n"), 0o644); err != nil {
 		return fmt.Errorf("cannot write readiness stamp: %w", err)
 	}
